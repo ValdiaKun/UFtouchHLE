@@ -88,6 +88,15 @@ jobs:
           cargo install cargo-ndk --locked
           cargo ndk --version
 
+      - name: Remove unused legacy SDL sample Gradle wrapper
+        run: |
+          # The pinned SDL submodule carries an old sample-project wrapper JAR
+          # that Gradle's checksum database does not recognize. This workflow
+          # uses Gradle 8.11.1 directly and never executes that wrapper.
+          # Remove the unused binary from this ephemeral checkout so wrapper
+          # validation stays enabled for all remaining Gradle wrappers.
+          rm -f vendor/SDL/android-project/gradle/wrapper/gradle-wrapper.jar
+
       - name: Set up Gradle 8.11.1 (no wrapper is committed)
         uses: gradle/actions/setup-gradle@v4
         with:
