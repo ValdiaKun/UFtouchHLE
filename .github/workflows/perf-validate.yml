@@ -1,0 +1,138 @@
+name: Performance branch validation
+
+# Validation for the low-end Android performance work. It builds and tests
+# only; it never signs, releases or publishes anything, and it has no access to
+# secrets. Experimental artifacts are labelled as such.
+
+on:
+  push:
+    branches: [perf-development]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-validate-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # Newer than the oldest toolchain known to work; keep in sync with what the
+  # last local run used so results are comparable.
+  RUST_TOOLCHAIN: "1.97.0"
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+
+jobs:
+  # Needs no dependencies at all: the statistics/report module is std-only and
+  # the analysis tooling is plain Python. Fast, and independent of the crate
+  # build, so it still reports when the full build fails.
+  standalone:
+    name: Standalone report tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt
+          rustup default "$RUST_TOOLCHAIN"
+      - name: rustfmt (performance_report.rs)
+        run: rustfmt --edition 2021 --check src/performance_report.rs
+      - name: Rust standalone tests
+        run: |
+          rustc --edition 2021 --test -D warnings src/performance_report.rs -o "$RUNNER_TEMP/report_tests"
+          "$RUNNER_TEMP/report_tests"
+      - name: Python report tooling tests
+        run: |
+          export PYTHONDONTWRITEBYTECODE=1
+          python3 dev-scripts/test_perf_report.py
+
+  # The real crate: bundled SDL2, OpenAL Soft and Dynarmic are compiled from the
+  # submodules, dependencies come from Cargo.lock only (--locked).
+  host-build:
+    name: Host build and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # `git describe` is the build identity shown in reports.
+          fetch-depth: 0
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build libboost-dev \
+            libasound2-dev libpulse-dev libudev-dev libgl-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt,clippy
+          rustup default "$RUST_TOOLCHAIN"
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: host-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: host-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+      - name: Record build identity
+        run: |
+          git rev-parse HEAD
+          git describe --tags --always
+          rustc -Vv
+          cargo -V
+          cmake --version | head -1
+      - name: Fetch dependencies (locked)
+        run: cargo fetch --locked
+      - name: Build (release)
+        run: cargo build --locked --release
+      - name: Performance unit tests
+        run: cargo test --locked --release --lib performance
+      # Run even if the step above failed, so one run shows the whole picture.
+      - name: All library unit tests
+        if: ${{ !cancelled() }}
+        run: cargo test --locked --release --lib
+
+  # Separate from the build so style findings never hide build results.
+  lint:
+    name: Lint and format
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build libboost-dev \
+            libasound2-dev libpulse-dev libudev-dev libgl-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt,clippy
+          rustup default "$RUST_TOOLCHAIN"
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: lint-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: lint-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+      - name: Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Lint (dev-scripts/lint.sh)
+        run: dev-scripts/lint.sh --locked
