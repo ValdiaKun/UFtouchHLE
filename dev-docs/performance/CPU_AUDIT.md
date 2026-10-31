@@ -51,7 +51,7 @@ fallbacks*, not the check.
 None of these is justified until a device baseline exists
 (see [BENCHMARKING.md](BENCHMARKING.md)). Each is a separate experiment.
 
-1. **Count fallbacks.** Add opt-in counters for memory-callback invocations per
+1. **Count fallbacks.** *(Counters implemented; awaiting a device run. See `svc_per_frame` etc. in BENCHMARKING.md.)* Add opt-in counters for memory-callback invocations per
    frame (and by kind: null page, other). If fallbacks are rare, memory access
    is not the bottleneck and the rest of this list is lower priority. This is
    the cheapest measurement and the one that decides the others.

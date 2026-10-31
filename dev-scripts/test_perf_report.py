@@ -39,7 +39,11 @@ def window(session, index, **over):
         "max_frame_ms": 30.0, "fps_1pct_low": 40.0, "cpu_ms_per_frame": 5.0,
         "gl_ms_per_frame": 3.0, "gl_calls_per_frame": 100.0,
         "present_ms_per_frame": 1.0, "readback_ms_per_frame": 0.0,
-        "requested_wait_ms_per_frame": 0.0, "slow_frames": 0, "peak_rss_mb": 500.0,
+        "requested_wait_ms_per_frame": 0.0, "slow_frames": 0,
+        "svc_per_frame": 40.0, "mem_callbacks_per_frame": 2.0,
+        "code_reads_per_frame": 0.5, "cache_invalidations_per_frame": 0.0,
+        "context_swaps_per_frame": 1.0, "run_calls_per_frame": 41.0,
+        "peak_rss_mb": 500.0,
     }  # fmt: skip
     row.update(over)
     return row

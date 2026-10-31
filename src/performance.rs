@@ -10,6 +10,7 @@ use crate::performance_report::{self, percentile};
 use crate::Environment;
 use std::io::Write;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use touchHLE_dynarmic_wrapper::touchHLE_CpuCounters;
 
 pub const REPORT_FILE: &str = "touchHLE_performance_tests.txt";
 /// Structured per-window results (CSV with [performance_report::CSV_HEADER],
@@ -80,6 +81,8 @@ pub struct State {
     reported_io_error: bool,
     /// Number of structured windows written so far this session.
     windows: u64,
+    /// CPU event counters at the start of the current window.
+    window_counters: touchHLE_CpuCounters,
 }
 
 /// Append compact audio events to the same report as the performance tests.
@@ -142,7 +145,8 @@ impl State {
         }
     }
 
-    fn clear_window(&mut self, now: Instant) {
+    fn clear_window(&mut self, now: Instant, counters: touchHLE_CpuCounters) {
+        self.window_counters = counters;
         self.cpu = Duration::ZERO;
         self.gl = Duration::ZERO;
         self.gl_calls = 0;
@@ -174,6 +178,9 @@ pub fn frame(
     let model = env.options.device_model.unwrap_or("iPhone1,1");
     let size = env.window.as_ref().unwrap().size_unrotated_unscaled();
     let scale = env.options.screen_scale();
+    // A cheap copy of the CPU wrapper's event counters; only reached when a
+    // performance test mode is active.
+    let cpu_counters = env.cpu.counters();
     let state = &mut env.framework_state.performance;
     if state.session.is_none() {
         let session = SystemTime::now()
@@ -195,13 +202,13 @@ pub fn frame(
     }
     // Do not count a long loading/pause gap as a normal gameplay frame.
     let Some(previous) = state.last_frame else {
-        state.clear_window(now);
+        state.clear_window(now, cpu_counters);
         return;
     };
     let interval = now.saturating_duration_since(previous);
     if interval > Duration::from_secs(2) {
         state.append("Sampling restarted after a loading/pause gap longer than 2s.");
-        state.clear_window(now);
+        state.clear_window(now, cpu_counters);
         return;
     }
     state.last_frame = Some(now);
@@ -227,6 +234,8 @@ pub fn frame(
     );
     state.append(&line);
     if let Some(stats) = performance_report::summarize(&state.intervals, elapsed.as_secs_f64()) {
+        let cpu_events = cpu_counters.since(&state.window_counters);
+        let per_frame_count = |count: u64| count as f64 / frames;
         let subsystems = performance_report::Subsystems {
             cpu_ms: per_frame(state.cpu),
             gl_ms: per_frame(state.gl),
@@ -235,6 +244,12 @@ pub fn frame(
             readback_ms: per_frame(state.readback),
             requested_wait_ms: per_frame(state.requested_wait),
             slow_frames: state.slow_frames,
+            svc_exits: per_frame_count(cpu_events.svc_exits),
+            mem_callbacks: per_frame_count(cpu_events.callback_reads + cpu_events.callback_writes),
+            code_reads: per_frame_count(cpu_events.code_reads),
+            cache_invalidations: per_frame_count(cpu_events.cache_invalidations),
+            context_swaps: per_frame_count(cpu_events.context_swaps),
+            run_calls: per_frame_count(cpu_events.run_calls),
         };
         let mode_name = format!("{mode:?}");
         let resolution = format!("{}x{}", size.0 * scale, size.1 * scale);
@@ -252,7 +267,7 @@ pub fn frame(
         state.windows += 1;
         state.append_structured(&csv_row, &json_line);
     }
-    state.clear_window(now);
+    state.clear_window(now, cpu_counters);
 }
 
 #[cfg(test)]
@@ -314,7 +329,12 @@ mod tests {
             session: Some(123),
             ..State::default()
         };
-        state.clear_window(now);
+        let counters = touchHLE_CpuCounters {
+            svc_exits: 77,
+            ..Default::default()
+        };
+        state.clear_window(now, counters);
+        assert_eq!(state.window_counters.svc_exits, 77);
         assert_eq!(state.cpu, Duration::ZERO);
         assert_eq!(state.short_reads, 0);
         assert_eq!(state.session, Some(123));

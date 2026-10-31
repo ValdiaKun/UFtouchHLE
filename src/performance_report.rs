@@ -95,9 +95,20 @@ pub struct Subsystems {
     pub readback_ms: f64,
     pub requested_wait_ms: f64,
     pub slow_frames: u64,
+    /// CPU event counts per frame (see `touchHLE_CpuCounters`). They show how
+    /// often the JIT leaves its fast path, which decides whether CPU-side
+    /// optimization is worth pursuing.
+    pub svc_exits: f64,
+    /// Memory read and write callbacks. Exclusive stores are included: they
+    /// are implemented with the same callbacks.
+    pub mem_callbacks: f64,
+    pub code_reads: f64,
+    pub cache_invalidations: f64,
+    pub context_swaps: f64,
+    pub run_calls: f64,
 }
 
-pub const CSV_HEADER: &str = "session,window_index,build,mode,device_model,resolution,measurement_s,frames,average_fps,median_frame_ms,p95_frame_ms,p99_frame_ms,max_frame_ms,fps_1pct_low,cpu_ms_per_frame,gl_ms_per_frame,gl_calls_per_frame,present_ms_per_frame,readback_ms_per_frame,requested_wait_ms_per_frame,slow_frames,peak_rss_mb";
+pub const CSV_HEADER: &str = "session,window_index,build,mode,device_model,resolution,measurement_s,frames,average_fps,median_frame_ms,p95_frame_ms,p99_frame_ms,max_frame_ms,fps_1pct_low,cpu_ms_per_frame,gl_ms_per_frame,gl_calls_per_frame,present_ms_per_frame,readback_ms_per_frame,requested_wait_ms_per_frame,slow_frames,svc_per_frame,mem_callbacks_per_frame,code_reads_per_frame,cache_invalidations_per_frame,context_swaps_per_frame,run_calls_per_frame,peak_rss_mb";
 
 fn csv_field(value: &str) -> String {
     if value.contains([',', '"', '\n', '\r']) {
@@ -170,6 +181,12 @@ pub fn csv_row(
         csv_num(Some(sub.readback_ms)),
         csv_num(Some(sub.requested_wait_ms)),
         sub.slow_frames.to_string(),
+        csv_num(Some(sub.svc_exits)),
+        csv_num(Some(sub.mem_callbacks)),
+        csv_num(Some(sub.code_reads)),
+        csv_num(Some(sub.cache_invalidations)),
+        csv_num(Some(sub.context_swaps)),
+        csv_num(Some(sub.run_calls)),
         csv_num(peak_rss_mb),
     ]
     .join(",")
@@ -184,7 +201,7 @@ pub fn json_line(
     peak_rss_mb: Option<f64>,
 ) -> String {
     format!(
-        "{{\"session\":{},\"window_index\":{},\"build\":{},\"mode\":{},\"device_model\":{},\"resolution\":{},\"measurement_s\":{},\"frames\":{},\"average_fps\":{},\"median_frame_ms\":{},\"p95_frame_ms\":{},\"p99_frame_ms\":{},\"max_frame_ms\":{},\"fps_1pct_low\":{},\"cpu_ms_per_frame\":{},\"gl_ms_per_frame\":{},\"gl_calls_per_frame\":{},\"present_ms_per_frame\":{},\"readback_ms_per_frame\":{},\"requested_wait_ms_per_frame\":{},\"slow_frames\":{},\"peak_rss_mb\":{}}}",
+        "{{\"session\":{},\"window_index\":{},\"build\":{},\"mode\":{},\"device_model\":{},\"resolution\":{},\"measurement_s\":{},\"frames\":{},\"average_fps\":{},\"median_frame_ms\":{},\"p95_frame_ms\":{},\"p99_frame_ms\":{},\"max_frame_ms\":{},\"fps_1pct_low\":{},\"cpu_ms_per_frame\":{},\"gl_ms_per_frame\":{},\"gl_calls_per_frame\":{},\"present_ms_per_frame\":{},\"readback_ms_per_frame\":{},\"requested_wait_ms_per_frame\":{},\"slow_frames\":{},\"svc_per_frame\":{},\"mem_callbacks_per_frame\":{},\"code_reads_per_frame\":{},\"cache_invalidations_per_frame\":{},\"context_swaps_per_frame\":{},\"run_calls_per_frame\":{},\"peak_rss_mb\":{}}}",
         run.session,
         run.window_index,
         json_string(run.build),
@@ -206,6 +223,12 @@ pub fn json_line(
         json_num(Some(sub.readback_ms)),
         json_num(Some(sub.requested_wait_ms)),
         sub.slow_frames,
+        json_num(Some(sub.svc_exits)),
+        json_num(Some(sub.mem_callbacks)),
+        json_num(Some(sub.code_reads)),
+        json_num(Some(sub.cache_invalidations)),
+        json_num(Some(sub.context_swaps)),
+        json_num(Some(sub.run_calls)),
         json_num(peak_rss_mb),
     )
 }
@@ -332,6 +355,12 @@ mod tests {
             readback_ms: 0.0,
             requested_wait_ms: 0.5,
             slow_frames: 0,
+            svc_exits: 40.0,
+            mem_callbacks: 2.5,
+            code_reads: 0.25,
+            cache_invalidations: 0.0,
+            context_swaps: 1.0,
+            run_calls: 41.0,
         };
         let columns = CSV_HEADER.split(',').count();
         // The model "iPhone4,1" contains a comma, so it must be quoted and
@@ -341,6 +370,13 @@ mod tests {
         assert_eq!(fields.len(), columns, "{row}");
         assert_eq!(fields[4], "iPhone4,1");
         assert_eq!(fields.last().unwrap(), "512.250");
+        // The CPU event columns sit just before peak_rss_mb and are numbered
+        // by name, not position.
+        let header: Vec<&str> = CSV_HEADER.split(',').collect();
+        let at = |name: &str| header.iter().position(|c| *c == name).unwrap();
+        assert_eq!(fields[at("svc_per_frame")], "40.000");
+        assert_eq!(fields[at("mem_callbacks_per_frame")], "2.500");
+        assert_eq!(fields[at("run_calls_per_frame")], "41.000");
         // Unavailable RSS is an empty trailing field, not "NaN"/"None".
         let fields = split_csv(&csv_row(&run(), &stats, &sub, None));
         assert_eq!(fields.len(), columns);

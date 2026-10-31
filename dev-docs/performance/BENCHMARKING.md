@@ -40,6 +40,10 @@ Files are written to the user data directory (on Android,
 | `present_ms_per_frame` | Time inside `presentRenderbuffer:`; includes `readback_ms_per_frame`. |
 | `requested_wait_ms_per_frame` | Sleep requested by the frame limiter. |
 | `slow_frames` | Frames that took the slow readback present path. |
+| `svc_per_frame` | JIT exits for SVCs per frame, i.e. guest-to-host function calls (and returns to the host). |
+| `mem_callbacks_per_frame` | Memory read + write *callbacks* per frame. These are the slow path: with fast memory on, only null-page accesses should land here, so a large value means the inline page-table path is being bypassed. |
+| `code_reads_per_frame` | Code words read while dynarmic translates blocks. High values after warm-up indicate JIT recompilation churn. |
+| `cache_invalidations_per_frame`, `context_swaps_per_frame`, `run_calls_per_frame` | Calls to invalidate the JIT cache, guest thread context switches, and `run_or_step` calls. |
 | `peak_rss_mb` | Process peak resident memory (`VmHWM`), Linux/Android only. Empty elsewhere. |
 
 Timers overlap and must not be added together. CPU and GL timing add some

@@ -37,6 +37,10 @@ METRICS = {
     "gl_ms_per_frame": False,
     "gl_calls_per_frame": False,
     "present_ms_per_frame": False,
+    # CPU event rates: how often the JIT leaves its fast path, per frame.
+    "svc_per_frame": False,
+    "mem_callbacks_per_frame": False,
+    "code_reads_per_frame": False,
     "peak_rss_mb": False,
 }
 # Metrics whose per-run value is the maximum over windows, not the median.
@@ -143,7 +147,10 @@ def default_columns():
         "median_frame_ms", "p95_frame_ms", "p99_frame_ms", "max_frame_ms",
         "fps_1pct_low", "cpu_ms_per_frame", "gl_ms_per_frame",
         "gl_calls_per_frame", "present_ms_per_frame", "readback_ms_per_frame",
-        "requested_wait_ms_per_frame", "slow_frames", "peak_rss_mb",
+        "requested_wait_ms_per_frame", "slow_frames", "svc_per_frame",
+        "mem_callbacks_per_frame", "code_reads_per_frame",
+        "cache_invalidations_per_frame", "context_swaps_per_frame",
+        "run_calls_per_frame", "peak_rss_mb",
     ]  # fmt: skip
 
 
