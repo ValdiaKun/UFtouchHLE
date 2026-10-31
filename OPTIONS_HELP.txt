@@ -377,12 +377,20 @@ Other options:
         playback. Ordinary launches do not keep this history. Original game files and
         saved settings are never modified.
 
-    --performance-test=reference|low-resolution|quiet-log|low-resolution-quiet-log
+    --performance-test=observe|reference|low-resolution|quiet-log|low-resolution-quiet-log
         Opt-in comparison diagnostics, available from GTA Vice City's Android
-        long-press menu. Tests use 1x scaling, sharp filtering and a 60fps cap.
+        long-press menu. "observe" only measures: resolution, filtering and
+        frame limit stay exactly as configured, so use it for baselines and
+        for A/B comparisons of code changes. The other tests use 1x scaling,
+        sharp filtering and a 60fps cap.
         Low-resolution modes disable Retina without changing device identity.
         Quiet modes suppress only short-read warnings, not actual I/O errors.
-        Reports append every 5 seconds to touchHLE_performance_tests.txt.
+        Reports append every 5 seconds to touchHLE_performance_tests.txt, and
+        as structured rows (median/p95/p99 frame time, average FPS, 1% low,
+        subsystem times, peak RSS) to touchHLE_performance.csv and
+        touchHLE_performance.jsonl. See dev-docs/performance/BENCHMARKING.md.
+        Frame times are measured at the guest's presentRenderbuffer: calls,
+        not at the Android display.
         CPU and GL submission timings add diagnostic overhead and measure host
         wall time, not asynchronous GPU execution. Readback is part of present
         time. Use the same gameplay scene for each mode; no settings are saved.

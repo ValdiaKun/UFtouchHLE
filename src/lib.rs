@@ -55,6 +55,7 @@ mod objc;
 mod options;
 mod paths;
 mod performance;
+mod performance_report;
 mod save_research;
 mod stack;
 pub mod transport;

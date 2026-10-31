@@ -1,6 +1,6 @@
 # UFtouchHLE: Low-End Android Performance Plan
 
-Status: **planning and baseline setup**. This document describes experiments, **not measured speedups**.
+Status: **planning and baseline setup**. This document describes experiments, **not measured speedups**. Instrumentation, report format and analysis tooling are described in [BENCHMARKING.md](BENCHMARKING.md); no physical-hardware baseline has been recorded yet.
 
 ## Goal and scope
 
