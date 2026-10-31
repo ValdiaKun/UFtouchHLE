@@ -67,8 +67,16 @@ jobs:
       - name: Check out complete source and pinned submodules
         uses: actions/checkout@v4
         with:
+          ref: perf-development
           fetch-depth: 0
           submodules: recursive
+          persist-credentials: false
+
+      - name: Check out independent QA verifier without overwriting development
+        uses: actions/checkout@v4
+        with:
+          ref: qa/android-validation
+          path: qa-tools
           persist-credentials: false
 
       - name: Set up Java 17
@@ -96,7 +104,15 @@ jobs:
             echo "$var=$NDK" >> "$GITHUB_ENV"
           done
           echo "ANDROID_NDK_VERSION=28.2.13676358" >> "$GITHUB_ENV"
-          echo "CMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake" >> "$GITHUB_ENV"
+          # The sdl2-sys build passes the NDK toolchain but omits ANDROID_ABI,
+          # causing CMake to default to armeabi-v7a even for aarch64 Cargo.
+          # A wrapper fixes the ABI/API before loading the pinned NDK toolchain.
+          TOOLCHAIN="$RUNNER_TEMP/uf-aarch64-toolchain.cmake"
+          printf 'set(ANDROID_ABI "arm64-v8a" CACHE STRING "" FORCE)\nset(ANDROID_PLATFORM "android-29" CACHE STRING "" FORCE)\ninclude("%s/build/cmake/android.toolchain.cmake")\n' "$NDK" > "$TOOLCHAIN"
+          echo "CMAKE_TOOLCHAIN_FILE=$TOOLCHAIN" >> "$GITHUB_ENV"
+          echo "ANDROID_ABI=arm64-v8a" >> "$GITHUB_ENV"
+          echo "ANDROID_PLATFORM=android-29" >> "$GITHUB_ENV"
+          cat "$TOOLCHAIN"
 
       - name: Install native build dependencies
         run: |
@@ -162,7 +178,7 @@ jobs:
           set -euo pipefail
           APK=android/app/build/outputs/apk/debug/app-debug.apk
           mkdir -p qa-results
-          python3 dev-scripts/verify-android-apk.py "$APK" --report qa-results/apk-report.json
+          python3 qa-tools/dev-scripts/verify-android-apk.py "$APK" --report qa-results/apk-report.json
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
           "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$APK" | tee qa-results/badging.txt
           grep -F "package: name='org.touchhleuf.android'" qa-results/badging.txt
