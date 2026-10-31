@@ -142,6 +142,13 @@ jobs:
             target
           key: lint-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: lint-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+      # This workflow runs on the QA branch but checks out the current
+      # perf-development sources. Record that exact source revision so
+      # reviewers can distinguish the tested source from the QA workflow SHA.
+      - name: Record exact development revision under lint
+        run: |
+          git rev-parse HEAD
+          git log -1 --format='%h %s'
       - name: Rust formatting
         run: cargo fmt --all -- --check
       - name: Lint (dev-scripts/lint.sh)
