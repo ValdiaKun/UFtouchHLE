@@ -68,7 +68,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build libboost-dev \
+            cmake ninja-build libboost-dev libsndio-dev \
             libasound2-dev libpulse-dev libudev-dev libgl-dev \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev
       - name: Install Rust
@@ -118,7 +118,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build libboost-dev \
+            cmake ninja-build libboost-dev libsndio-dev \
             libasound2-dev libpulse-dev libudev-dev libgl-dev \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev
       - name: Install Rust
