@@ -113,6 +113,14 @@ jobs:
       - name: Download Cargo dependencies according to Cargo.lock
         run: cargo fetch --locked
 
+      - name: Provide local Android SDK configuration for cargo-ndk plugin
+        run: |
+          # The checked-in Gradle cargo-ndk plugin expects local.properties
+          # even when ANDROID_HOME and ANDROID_NDK_HOME are already set.
+          # This generated file is gitignored and contains no secrets.
+          printf 'sdk.dir=%s\nndk.dir=%s\n' "$ANDROID_HOME" "$ANDROID_NDK_HOME" > android/local.properties
+          test -s android/local.properties
+
       - name: Build development APK without production signing keys
         run: |
           test -z "${TOUCHHLE_KEYSTORE_FILE:-}"
