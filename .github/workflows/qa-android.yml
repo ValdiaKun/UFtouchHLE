@@ -34,14 +34,20 @@ jobs:
           PYTHONDONTWRITEBYTECODE: '1'
         run: python3 dev-scripts/test_verify_android_apk.py
 
-      - name: Check out current development branch for independent review
+  development-report:
+    name: Independent development report compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout independent QA assertions
+        uses: actions/checkout@v4
+      - name: Checkout current development branch
         uses: actions/checkout@v4
         with:
           ref: perf-development
           path: development
           persist-credentials: false
-
-      - name: Test development benchmark report parser
+      - name: Run development and independent report tests
         env:
           PYTHONDONTWRITEBYTECODE: '1'
           UF_DEV_ROOT: development
