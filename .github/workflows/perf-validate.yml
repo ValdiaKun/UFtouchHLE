@@ -35,6 +35,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: perf-development
+          persist-credentials: false
       - name: Install Rust
         run: |
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt
@@ -61,6 +64,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: perf-development
+          persist-credentials: false
           submodules: recursive
           # `git describe` is the build identity shown in reports.
           fetch-depth: 0
@@ -112,6 +117,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: perf-development
+          persist-credentials: false
           submodules: recursive
           fetch-depth: 0
       - name: Install system dependencies
