@@ -12,6 +12,7 @@
 //! In such cases, we should reject vendor-specific things unless we've made
 //! sure we can emulate them on all host platforms for touchHLE.
 
+use super::binding_cache::{note_textures_deleted, texture_delete_epoch, TextureBindingCache};
 use super::gles11_raw as gles11;
 use super::gles11_raw::types::*;
 use super::gles_generic::GLES;
@@ -24,6 +25,8 @@ pub struct GLES1NativeContext {
     gl_ctx: GLContext,
     is_loaded: bool,
     arrays: ArrayTracking,
+    /// Created on first use, see [TextureBindingCache].
+    textures: Option<TextureBindingCache>,
 }
 
 /// Number of texture units whose texture coordinate arrays are tracked.
@@ -81,6 +84,7 @@ impl GLESContext for GLES1NativeContext {
             gl_ctx: window.create_gl_context(GLVersion::GLES11)?,
             is_loaded: false,
             arrays: Default::default(),
+            textures: None,
         })
     }
 
@@ -91,6 +95,7 @@ impl GLESContext for GLES1NativeContext {
         if self.gl_ctx.is_current() && self.is_loaded {
             return Box::new(GLES1Native {
                 arrays: &mut self.arrays,
+                textures: &mut self.textures,
             });
         }
 
@@ -103,6 +108,7 @@ impl GLESContext for GLES1NativeContext {
         }
         Box::new(GLES1Native {
             arrays: &mut self.arrays,
+            textures: &mut self.textures,
         })
     }
 
@@ -114,6 +120,7 @@ impl GLESContext for GLES1NativeContext {
         if self.gl_ctx.is_current() && self.is_loaded {
             return Box::new(GLES1Native {
                 arrays: &mut self.arrays,
+                textures: &mut self.textures,
             });
         }
 
@@ -124,15 +131,28 @@ impl GLESContext for GLES1NativeContext {
         }
         Box::new(GLES1Native {
             arrays: &mut self.arrays,
+            textures: &mut self.textures,
         })
     }
 }
 
 pub struct GLES1Native<'gl_ctx> {
     arrays: &'gl_ctx mut ArrayTracking,
+    textures: &'gl_ctx mut Option<TextureBindingCache>,
 }
 
 impl GLES1Native<'_> {
+    /// The context's texture binding cache. It starts from the GL defaults,
+    /// which holds because every `glActiveTexture`/`glBindTexture` on this
+    /// context goes through this type, and it is created before the first one.
+    unsafe fn texture_cache(&mut self) -> &mut TextureBindingCache {
+        self.textures.get_or_insert_with(|| {
+            let mut max_units: GLint = 0;
+            gles11::GetIntegerv(gles11::MAX_TEXTURE_UNITS, &mut max_units);
+            TextureBindingCache::new(max_units.max(1) as usize, texture_delete_epoch())
+        })
+    }
+
     /// Run `draw` with any vertex arrays that are enabled without data
     /// disabled (see [ArrayTracking]).
     unsafe fn without_empty_arrays(&mut self, draw: impl FnOnce()) {
@@ -581,15 +601,28 @@ impl GLES for GLES1Native<'_> {
         gles11::GenTextures(n, textures)
     }
     unsafe fn DeleteTextures(&mut self, n: GLsizei, textures: *const GLuint) {
+        // Texture names are shared between contexts and may be reused, so
+        // this invalidates every context's cached bindings.
+        note_textures_deleted();
         gles11::DeleteTextures(n, textures)
     }
     unsafe fn ActiveTexture(&mut self, texture: GLenum) {
+        if !self.texture_cache().active_texture(texture) {
+            return;
+        }
         gles11::ActiveTexture(texture)
     }
     unsafe fn IsTexture(&mut self, texture: GLuint) -> GLboolean {
         gles11::IsTexture(texture)
     }
     unsafe fn BindTexture(&mut self, target: GLenum, texture: GLuint) {
+        if target == gles11::TEXTURE_2D
+            && !self
+                .texture_cache()
+                .bind_texture_2d(texture_delete_epoch(), texture)
+        {
+            return;
+        }
         gles11::BindTexture(target, texture)
     }
     unsafe fn TexParameteri(&mut self, target: GLenum, pname: GLenum, param: GLint) {

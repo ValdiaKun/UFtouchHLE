@@ -70,6 +70,7 @@
 /// every context switch (several times per frame for some apps) is slow.
 const FUNCTION_POINTERS_ARE_PER_CONTEXT: bool = cfg!(target_os = "windows");
 
+mod binding_cache;
 pub mod gles1_native;
 pub mod gles1_on_gl2;
 mod gles_generic;
