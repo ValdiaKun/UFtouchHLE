@@ -1291,9 +1291,12 @@ const INDICES_PER_9PATCH: usize = SQUARE_INDICES.len() * 3 * 3;
 
 fn make_9patch_coords(x_edges: [f32; 4], y_edges: [f32; 4]) -> [f32; FLOATS_PER_9PATCH] {
     let mut out_points = [0.0; FLOATS_PER_9PATCH];
-    #[allow(clippy::chunks_exact_to_as_chunks)]
+    // FLOATS_PER_9PATCH is an exact multiple of the chunk size, so the
+    // remainder returned by `as_chunks_mut` is always empty.
     for (i, out_points_chunk) in out_points
-        .chunks_exact_mut(BASIC_SQUARE_POINTS.len())
+        .as_chunks_mut::<{ BASIC_SQUARE_POINTS.len() }>()
+        .0
+        .iter_mut()
         .enumerate()
     {
         let (x, y) = (i % 3, i / 3);
@@ -1313,9 +1316,12 @@ fn make_9patch_coords(x_edges: [f32; 4], y_edges: [f32; 4]) -> [f32; FLOATS_PER_
 
 fn make_9patch_indices() -> [u8; INDICES_PER_9PATCH] {
     let mut out_indices = [0; SQUARE_INDICES.len() * 3 * 3];
-    #[allow(clippy::chunks_exact_to_as_chunks)]
+    // The array length is an exact multiple of the chunk size, so the
+    // remainder returned by `as_chunks_mut` is always empty.
     for (i, out_indices_chunk) in out_indices
-        .chunks_exact_mut(SQUARE_INDICES.len())
+        .as_chunks_mut::<{ SQUARE_INDICES.len() }>()
+        .0
+        .iter_mut()
         .enumerate()
     {
         for (out_index, in_index) in out_indices_chunk
