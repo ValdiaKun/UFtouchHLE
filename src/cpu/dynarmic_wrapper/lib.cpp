@@ -32,6 +32,24 @@ struct touchHLE_DynarmicContext {
   std::uint32_t cpsr;
   std::uint32_t fpscr;
 };
+// Event counters, only ever incremented (never reset), so a reader can take
+// two snapshots and subtract. Keep in sync with `touchHLE_CpuCounters` in
+// lib.rs. Each field is incremented on a path that is already slow (a
+// callback into Rust, a JIT exit or a cache flush), never on Dynarmic's inline
+// page-table fast path, so the cost is negligible.
+struct touchHLE_CpuCounters {
+  std::uint64_t run_calls;           // run_or_step() calls
+  std::uint64_t svc_exits;           // JIT exits for SVC (host function calls)
+  std::uint64_t callback_reads;      // MemoryRead8/16/32/64 callbacks
+  std::uint64_t callback_writes;     // MemoryWrite8/16/32/64 callbacks
+  std::uint64_t exclusive_writes;    // MemoryWriteExclusive32 callbacks
+  std::uint64_t code_reads;          // MemoryReadCode (JIT translation)
+  std::uint64_t cache_invalidations; // invalidate_cache_range() calls
+  std::uint64_t cache_invalidated_bytes;
+  std::uint64_t context_swaps; // swap_context() calls
+};
+static_assert(sizeof(touchHLE_CpuCounters) == 9 * sizeof(std::uint64_t),
+              "layout must match touchHLE_CpuCounters in lib.rs");
 }
 
 const auto HaltReasonSvc = Dynarmic::HaltReason::UserDefined1;
@@ -44,9 +62,11 @@ public:
   touchHLE_Mem *mem = nullptr;
   std::uint64_t ticks_remaining;
   uint32_t halting_svc;
+  touchHLE_CpuCounters counters = {};
 
 private:
   std::uint8_t MemoryRead8(VAddr vaddr) override {
+    counters.callback_reads++;
     bool error;
     auto value = touchHLE_cpu_read_u8(mem, vaddr, &error);
     if (error) {
@@ -55,6 +75,7 @@ private:
     return value;
   }
   std::uint16_t MemoryRead16(VAddr vaddr) override {
+    counters.callback_reads++;
     bool error;
     auto value = touchHLE_cpu_read_u16(mem, vaddr, &error);
     if (error) {
@@ -63,6 +84,7 @@ private:
     return value;
   }
   std::uint32_t MemoryRead32(VAddr vaddr) override {
+    counters.callback_reads++;
     bool error;
     auto value = touchHLE_cpu_read_u32(mem, vaddr, &error);
     if (error) {
@@ -71,6 +93,7 @@ private:
     return value;
   }
   std::uint64_t MemoryRead64(VAddr vaddr) override {
+    counters.callback_reads++;
     bool error;
     auto value = touchHLE_cpu_read_u64(mem, vaddr, &error);
     if (error) {
@@ -80,6 +103,7 @@ private:
   }
 
   std::optional<std::uint32_t> MemoryReadCode(VAddr vaddr) override {
+    counters.code_reads++;
     bool error;
     auto value = touchHLE_cpu_read_u32(mem, vaddr, &error);
     if (error) {
@@ -90,21 +114,25 @@ private:
   }
 
   void MemoryWrite8(VAddr vaddr, std::uint8_t value) override {
+    counters.callback_writes++;
     if (touchHLE_cpu_write_u8(mem, vaddr, value)) {
       cpu->HaltExecution(Dynarmic::HaltReason::MemoryAbort);
     }
   }
   void MemoryWrite16(VAddr vaddr, std::uint16_t value) override {
+    counters.callback_writes++;
     if (touchHLE_cpu_write_u16(mem, vaddr, value)) {
       cpu->HaltExecution(Dynarmic::HaltReason::MemoryAbort);
     }
   }
   void MemoryWrite32(VAddr vaddr, std::uint32_t value) override {
+    counters.callback_writes++;
     if (touchHLE_cpu_write_u32(mem, vaddr, value)) {
       cpu->HaltExecution(Dynarmic::HaltReason::MemoryAbort);
     }
   }
   void MemoryWrite64(VAddr vaddr, std::uint64_t value) override {
+    counters.callback_writes++;
     if (touchHLE_cpu_write_u64(mem, vaddr, value)) {
       cpu->HaltExecution(Dynarmic::HaltReason::MemoryAbort);
     }
@@ -120,6 +148,7 @@ private:
   }
   bool MemoryWriteExclusive32(VAddr addr, std::uint32_t value,
                               std::uint32_t expected) override {
+    counters.exclusive_writes++;
     // As long as we stay single threaded on the host side,
     // this implementation is OK
     // TODO: revisit once (if) we switch to a host multi-threading
@@ -142,6 +171,7 @@ private:
     abort(); // TODO
   }
   void CallSVC(std::uint32_t svc) override {
+    counters.svc_exits++;
     halting_svc = svc;
     cpu->HaltExecution(HaltReasonSvc);
   }
@@ -269,10 +299,13 @@ public:
   void set_cpsr(std::uint32_t cpsr) { cpu->SetCpsr(cpsr); }
 
   void invalidate_cache_range(VAddr start, std::uint32_t size) {
+    env.counters.cache_invalidations++;
+    env.counters.cache_invalidated_bytes += size;
     cpu->InvalidateCacheRange(start, size);
   }
 
   void swap_context(touchHLE_DynarmicContext *context) {
+    env.counters.context_swaps++;
     touchHLE_DynarmicContext tmp = {cpu->Regs(), cpu->ExtRegs(), cpu->Cpsr(),
                                     cpu->Fpscr()};
     cpu->Regs() = context->regs;
@@ -282,7 +315,10 @@ public:
     *context = tmp;
   }
 
+  const touchHLE_CpuCounters &counters() const { return env.counters; }
+
   std::int32_t run_or_step(touchHLE_Mem *mem, std::uint64_t *ticks) {
+    env.counters.run_calls++;
     env.mem = mem;
     Dynarmic::HaltReason hr;
     if (ticks) {
@@ -336,6 +372,11 @@ std::uint32_t touchHLE_DynarmicWrapper_cpsr(const DynarmicWrapper *cpu) {
 void touchHLE_DynarmicWrapper_set_cpsr(DynarmicWrapper *cpu,
                                        std::uint32_t cpsr) {
   cpu->set_cpsr(cpsr);
+}
+
+void touchHLE_DynarmicWrapper_counters(const DynarmicWrapper *cpu,
+                                       touchHLE_CpuCounters *out) {
+  *out = cpu->counters();
 }
 
 void touchHLE_DynarmicWrapper_swap_context(DynarmicWrapper *cpu,

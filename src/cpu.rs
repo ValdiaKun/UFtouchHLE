@@ -310,6 +310,14 @@ impl Cpu {
         unsafe { touchHLE_DynarmicWrapper_swap_context(self.dynarmic_wrapper, context) }
     }
 
+    /// Snapshot of the CPU wrapper's event counters (see
+    /// [touchHLE_CpuCounters]). Cheap: copies nine integers.
+    pub fn counters(&self) -> touchHLE_CpuCounters {
+        let mut counters = touchHLE_CpuCounters::default();
+        unsafe { touchHLE_DynarmicWrapper_counters(self.dynarmic_wrapper, &mut counters) };
+        counters
+    }
+
     /// Get PC with the Thumb bit appropriately set.
     pub fn pc_with_thumb_bit(&self) -> GuestFunction {
         let pc = self.regs()[Self::PC];
