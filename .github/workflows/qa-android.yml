@@ -188,7 +188,7 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
           "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$APK" | tee qa-results/badging.txt
           grep -F "package: name='org.touchhleuf.android'" qa-results/badging.txt
-          grep -F "sdkVersion:'29'" qa-results/badging.txt
+          grep -F "minSdkVersion:'29'" qa-results/badging.txt
           grep -F "targetSdkVersion:'31'" qa-results/badging.txt
           sha256sum "$APK" | tee qa-results/sha256.txt
 
