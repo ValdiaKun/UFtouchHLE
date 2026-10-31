@@ -35,6 +35,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: perf-development
+          persist-credentials: false
       - name: Install Rust
         run: |
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt
@@ -54,11 +57,15 @@ jobs:
   # submodules, dependencies come from Cargo.lock only (--locked).
   host-build:
     name: Host build and unit tests
-    runs-on: ubuntu-latest
+    # GCC 15 on ubuntu-latest defaults to C23, which rejects legacy SDL
+    # enum identifiers (false/bool); pin a tested C17-default host instead.
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: perf-development
+          persist-credentials: false
           submodules: recursive
           # `git describe` is the build identity shown in reports.
           fetch-depth: 0
@@ -66,7 +73,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build libboost-dev \
+            cmake ninja-build libboost-dev libsndio-dev \
             libasound2-dev libpulse-dev libudev-dev libgl-dev \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev
       - name: Install Rust
@@ -104,18 +111,21 @@ jobs:
   # Separate from the build so style findings never hide build results.
   lint:
     name: Lint and format
-    runs-on: ubuntu-latest
+    # Match host-build to avoid divergent bundled native dependencies.
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: perf-development
+          persist-credentials: false
           submodules: recursive
           fetch-depth: 0
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build libboost-dev \
+            cmake ninja-build libboost-dev libsndio-dev \
             libasound2-dev libpulse-dev libudev-dev libgl-dev \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev
       - name: Install Rust
@@ -132,6 +142,13 @@ jobs:
             target
           key: lint-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: lint-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+      # This workflow runs on the QA branch but checks out the current
+      # perf-development sources. Record that exact source revision so
+      # reviewers can distinguish the tested source from the QA workflow SHA.
+      - name: Record exact development revision under lint
+        run: |
+          git rev-parse HEAD
+          git log -1 --format='%h %s'
       - name: Rust formatting
         run: cargo fmt --all -- --check
       - name: Lint (dev-scripts/lint.sh)

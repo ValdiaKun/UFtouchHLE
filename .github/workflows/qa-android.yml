@@ -1,0 +1,205 @@
+name: UFtouchHLE Android QA
+
+# Independent Android test build; never publishes a release or uses a signing secret.
+on:
+  push:
+    branches: [perf-development, qa/android-validation]
+  pull_request:
+    branches: [perf-development]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uf-android-qa-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_TOOLCHAIN: '1.97.0'
+  CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+  TOUCHHLE_BRANDING: UF
+  CARGO_INCREMENTAL: '0'
+  CARGO_TERM_COLOR: always
+
+jobs:
+  offline-validator:
+    name: APK validator unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run offline APK verifier tests
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 dev-scripts/test_verify_android_apk.py
+
+  development-report:
+    name: Independent development report compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout independent QA assertions
+        uses: actions/checkout@v4
+      - name: Checkout current development branch
+        uses: actions/checkout@v4
+        with:
+          ref: perf-development
+          path: development
+          persist-credentials: false
+      - name: Install Rust compiler for dependency-free GLES cache tests
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+      - name: Test current development benchmark parser and GLES cache
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          UF_DEV_ROOT: development
+        run: |
+          python3 development/dev-scripts/test_perf_report.py
+          python3 dev-scripts/test_dev_report_compat.py
+          python3 dev-scripts/test_dev_gles_binding_cache.py
+
+  android-apk:
+    name: Build and validate Android ARM64 debug APK
+    needs: offline-validator
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+    steps:
+      - name: Check out complete source and pinned submodules
+        uses: actions/checkout@v4
+        with:
+          ref: perf-development
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Check out independent QA verifier without overwriting development
+        uses: actions/checkout@v4
+        with:
+          ref: qa/android-validation
+          path: qa-tools
+          persist-credentials: false
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Use preinstalled Android SDK command-line tools
+        run: |
+          test -n "$ANDROID_HOME"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -path '*/bin/sdkmanager' | sort -V | tail -1)"
+          test -x "$SDKMANAGER"
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+          "$SDKMANAGER" --version
+
+      - name: Install Android SDK platform, build tools and NDK
+        run: |
+          "$SDKMANAGER" --install "platforms;android-31" "build-tools;35.0.0" "ndk;28.2.13676358"
+          NDK="$ANDROID_HOME/ndk/28.2.13676358"
+          test -x "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+          # The hosted runner may predefine ANDROID_NDK_ROOT for a different
+          # installed NDK. Keep CMake/Cargo/Gradle on one exact NDK revision.
+          for var in ANDROID_NDK_HOME ANDROID_NDK_ROOT ANDROID_NDK NDK_HOME; do
+            echo "$var=$NDK" >> "$GITHUB_ENV"
+          done
+          echo "ANDROID_NDK_VERSION=28.2.13676358" >> "$GITHUB_ENV"
+          # The sdl2-sys build passes the NDK toolchain but omits ANDROID_ABI,
+          # causing CMake to default to armeabi-v7a even for aarch64 Cargo.
+          # A wrapper fixes the ABI/API before loading the pinned NDK toolchain.
+          TOOLCHAIN="$RUNNER_TEMP/uf-aarch64-toolchain.cmake"
+          printf 'set(ANDROID_ABI "arm64-v8a" CACHE STRING "" FORCE)\nset(ANDROID_PLATFORM "android-29" CACHE STRING "" FORCE)\ninclude("%s/build/cmake/android.toolchain.cmake")\n' "$NDK" > "$TOOLCHAIN"
+          echo "CMAKE_TOOLCHAIN_FILE=$TOOLCHAIN" >> "$GITHUB_ENV"
+          echo "ANDROID_ABI=arm64-v8a" >> "$GITHUB_ENV"
+          echo "ANDROID_PLATFORM=android-29" >> "$GITHUB_ENV"
+          cat "$TOOLCHAIN"
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build libboost-dev
+          # Dynarmic's Android build.rs requires Boost headers at vendor/boost.
+          # Installed distribution headers are used instead of an unpinned download.
+          mkdir -p vendor/boost
+          cp -a /usr/include/boost vendor/boost/boost
+          test -f vendor/boost/boost/version.hpp
+
+      - name: Set up Rust ARM64 target
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          rustup target add aarch64-linux-android
+          cargo install cargo-ndk --locked
+          cargo ndk --version
+
+      - name: Remove unused legacy SDL sample Gradle wrapper
+        run: |
+          # The pinned SDL submodule carries an old sample-project wrapper JAR
+          # that Gradle's checksum database does not recognize. This workflow
+          # uses Gradle 8.11.1 directly and never executes that wrapper.
+          # Remove the unused binary from this ephemeral checkout so wrapper
+          # validation stays enabled for all remaining Gradle wrappers.
+          rm -f vendor/SDL/android-project/gradle/wrapper/gradle-wrapper.jar
+
+      - name: Set up Gradle 8.11.1 (no wrapper is committed)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Record exact build identity
+        run: |
+          git rev-parse HEAD
+          git describe --tags --always
+          rustc --version
+          gradle --version
+          test -f Cargo.lock
+
+      - name: Download Cargo dependencies according to Cargo.lock
+        run: cargo fetch --locked
+
+      - name: Provide local Android SDK configuration for cargo-ndk plugin
+        run: |
+          # The checked-in Gradle cargo-ndk plugin expects local.properties
+          # even when ANDROID_HOME and ANDROID_NDK_HOME are already set.
+          # This generated file is gitignored and contains no secrets.
+          printf 'sdk.dir=%s\nndk.dir=%s\n' "$ANDROID_HOME" "$ANDROID_NDK_HOME" > android/local.properties
+          test -s android/local.properties
+
+      - name: Build development APK without production signing keys
+        run: |
+          test -z "${TOUCHHLE_KEYSTORE_FILE:-}"
+          test -z "${TOUCHHLE_KEYSTORE_PASSWORD:-}"
+          gradle --no-daemon --max-workers=2 -p android :app:assembleDebug --stacktrace
+          test -s android/app/build/outputs/apk/debug/app-debug.apk
+          git diff --exit-code -- Cargo.lock
+
+      - name: Verify APK integrity, ABI, ELF alignment and signature
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          mkdir -p qa-results
+          python3 qa-tools/dev-scripts/verify-android-apk.py "$APK" --report qa-results/apk-report.json
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$APK" | tee qa-results/badging.txt
+          grep -F "package: name='org.touchhleuf.android'" qa-results/badging.txt
+          grep -F "minSdkVersion:'29'" qa-results/badging.txt
+          grep -F "targetSdkVersion:'31'" qa-results/badging.txt
+          sha256sum "$APK" | tee qa-results/sha256.txt
+
+      - name: Upload test-only APK and QA metadata
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: UFtouchHLE-android-debug-QA
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            qa-results/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
