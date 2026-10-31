@@ -54,7 +54,9 @@ jobs:
   # submodules, dependencies come from Cargo.lock only (--locked).
   host-build:
     name: Host build and unit tests
-    runs-on: ubuntu-latest
+    # GCC 15 on ubuntu-latest defaults to C23, which rejects legacy SDL
+    # enum identifiers (false/bool); pin a tested C17-default host instead.
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -104,7 +106,8 @@ jobs:
   # Separate from the build so style findings never hide build results.
   lint:
     name: Lint and format
-    runs-on: ubuntu-latest
+    # Match host-build to avoid divergent bundled native dependencies.
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
