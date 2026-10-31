@@ -47,13 +47,19 @@ jobs:
           ref: perf-development
           path: development
           persist-credentials: false
-      - name: Run development and independent report tests
+      - name: Install Rust compiler for dependency-free GLES cache tests
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+      - name: Test current development benchmark parser and GLES cache
         env:
           PYTHONDONTWRITEBYTECODE: '1'
           UF_DEV_ROOT: development
         run: |
           python3 development/dev-scripts/test_perf_report.py
           python3 dev-scripts/test_dev_report_compat.py
+          python3 dev-scripts/test_dev_gles_binding_cache.py
 
   android-apk:
     name: Build and validate Android ARM64 debug APK
