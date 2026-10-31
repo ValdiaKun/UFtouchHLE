@@ -234,6 +234,29 @@ class LegacySchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(pr.ReportError, "missing columns"):
             pr.load(path)
 
+    def test_mixed_schema_jsonl_is_rejected_in_either_order(self):
+        v1 = {k: v for k, v in window(1, 0).items() if k not in pr.CPU_EVENT_COLUMNS}
+        v2 = window(1, 1)
+        for name, records in (("v1v2.jsonl", (v1, v2)), ("v2v1.jsonl", (v2, v1))):
+            path = os.path.join(self.dir.name, name)
+            write_text(path, "".join(json.dumps(r) + "\n" for r in records))
+            with self.assertRaisesRegex(pr.ReportError, "mixed report schemas"):
+                pr.load(path)
+
+    def test_mixed_schema_error_names_the_lines(self):
+        v1 = {k: v for k, v in window(1, 0).items() if k not in pr.CPU_EVENT_COLUMNS}
+        path = os.path.join(self.dir.name, "m.jsonl")
+        write_text(path, json.dumps(v1) + "\n\n" + json.dumps(window(1, 1)) + "\n")
+        with self.assertRaisesRegex(pr.ReportError, r"m\.jsonl:3: .*line 1 is v1.*v2"):
+            pr.load(path)
+
+    def test_same_schema_jsonl_with_many_records_still_loads(self):
+        path = os.path.join(self.dir.name, "ok.jsonl")
+        write_text(path, "".join(json.dumps(window(1, i)) + "\n" for i in range(3)))
+        rows = pr.load(path)
+        self.assertEqual([r["schema"] for r in rows], [2, 2, 2])
+        self.assertEqual(rows[2]["svc_per_frame"], 40.0)
+
     def test_unknown_csv_layout_is_still_rejected(self):
         path = os.path.join(self.dir.name, "odd.csv")
         columns = pr.legacy_columns()[:-1]  # drops peak_rss_mb: neither schema

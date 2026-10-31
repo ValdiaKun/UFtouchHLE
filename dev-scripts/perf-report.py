@@ -144,8 +144,18 @@ def load(path, columns=None):
                     raise ReportError(f"{where}: invalid JSON: {error}")
                 if not isinstance(raw, dict):
                     raise ReportError(f"{where}: record is not an object")
+                record = _pick_schema_from_keys(raw.keys(), columns)
                 if chosen is None:
-                    chosen = _pick_schema_from_keys(raw.keys(), columns)
+                    chosen = record
+                    first_line = number
+                elif record[1] != chosen[1]:
+                    # One file is one layout. Never apply the first record's
+                    # columns to a later record: that would drop its metrics.
+                    raise ReportError(
+                        f"{where}: mixed report schemas (line {first_line} is "
+                        f"v{chosen[1]}, this record is v{record[1]}); split the "
+                        "file or regenerate it"
+                    )
                 rows.append(_row(raw, where, *chosen))
         else:
             reader = csv.DictReader(handle)
