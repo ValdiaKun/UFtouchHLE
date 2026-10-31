@@ -22,6 +22,13 @@ A *window* is about 5 seconds of frames. For each window the emulator appends:
   row per window with identical content. The CSV header is
   `CSV_HEADER` in `src/performance_report.rs`.
 
+  **Schema versions.** v2 (current) includes the six CPU event rates
+  (`svc_per_frame` .. `run_calls_per_frame`); v1 files, from before commit
+  `2693c85`, lack them. `perf-report.py` detects the version from the header
+  (CSV) or the first record (JSONL), loads v1 files with the CPU event metrics
+  unavailable (never zero), and `compare` prints a note and compares those
+  metrics only when both sides have them. Any other layout is rejected.
+
 Files are written to the user data directory (on Android,
 `/storage/emulated/0/Android/data/org.touchhleuf.android/files/`).
 

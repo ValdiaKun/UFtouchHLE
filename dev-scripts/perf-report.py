@@ -50,6 +50,14 @@ STRING_COLUMNS = set(IDENTITY)
 INT_COLUMNS = {"session", "window_index", "frames", "slow_frames"}
 # Columns that may be empty (CSV) / null (JSON) when unavailable.
 OPTIONAL = {"fps_1pct_low", "peak_rss_mb"}
+# Report schema versions. v1 predates the CPU event rates; v2 (current) has them.
+# v1 files stay loadable: their CPU event metrics are None, never zero, so a
+# comparison cannot mistake "not measured" for "no events".
+CPU_EVENT_COLUMNS = (
+    "svc_per_frame", "mem_callbacks_per_frame", "code_reads_per_frame",
+    "cache_invalidations_per_frame", "context_swaps_per_frame",
+    "run_calls_per_frame",
+)  # fmt: skip
 MIN_RUNS_FOR_CONCLUSION = 3
 # The directive: a ~2% difference within noise is not proof of anything.
 MIN_SIGNIFICANT_FRACTION = 0.02
@@ -73,16 +81,18 @@ def _number(name, raw, where):
     return value
 
 
-def _row(raw, where, columns):
+def _row(raw, where, columns, schema=2):
     missing = [c for c in columns if c not in raw]
     if missing:
         raise ReportError(f"{where}: missing columns {missing}")
-    row = {}
+    row = {"schema": schema}
     for name in columns:
         if name in STRING_COLUMNS:
             row[name] = raw[name] if raw[name] is not None else ""
         else:
             row[name] = _number(name, raw[name], where)
+    for name in CPU_EVENT_COLUMNS:
+        row.setdefault(name, None)  # v1: not measured
     check_row(row, where)
     return row
 
@@ -103,9 +113,19 @@ def check_row(row, where):
         raise ReportError(f"{where}: fps_1pct_low must be positive")
 
 
+def legacy_columns():
+    """Columns of the v1 schema (before the CPU event rates were added)."""
+    return [c for c in default_columns() if c not in CPU_EVENT_COLUMNS]
+
+
 def load(path, columns=None):
-    """Load and validate a CSV or JSONL report. Returns a list of row dicts."""
-    columns = columns or default_columns()
+    """Load and validate a CSV or JSONL report. Returns a list of row dicts.
+
+    The schema is detected from the header (CSV) or the first record (JSONL):
+    v2 is the current layout, v1 the layout before the CPU event rates. Every
+    row carries a "schema" key. Any other layout is rejected. Passing
+    `columns` forces exactly that layout (schema 2).
+    """
     rows = []
     try:
         handle = open(path, newline="", encoding="utf-8")
@@ -113,6 +133,7 @@ def load(path, columns=None):
         raise ReportError(f"{path}: {error}")
     with handle:
         if path.endswith(".jsonl"):
+            chosen = None
             for number, line in enumerate(handle, 1):
                 if not line.strip():
                     continue
@@ -121,23 +142,52 @@ def load(path, columns=None):
                     raw = json.loads(line)
                 except json.JSONDecodeError as error:
                     raise ReportError(f"{where}: invalid JSON: {error}")
-                rows.append(_row(raw, where, columns))
+                if not isinstance(raw, dict):
+                    raise ReportError(f"{where}: record is not an object")
+                if chosen is None:
+                    chosen = _pick_schema_from_keys(raw.keys(), columns)
+                rows.append(_row(raw, where, *chosen))
         else:
             reader = csv.DictReader(handle)
-            if reader.fieldnames != columns:
+            found = reader.fieldnames or []
+            chosen = _pick_schema_from_header(found, columns)
+            if chosen is None:
+                expected = columns or default_columns()
                 raise ReportError(
-                    f"{path}: header does not match the expected columns.\n"
-                    f"  expected: {','.join(columns)}\n"
-                    f"  found:    {','.join(reader.fieldnames or [])}"
+                    f"{path}: header does not match a known report schema "
+                    f"(v2 current, v1 without CPU event rates).\n"
+                    f"  expected: {','.join(expected)}\n"
+                    f"  found:    {','.join(found)}"
                 )
             for raw in reader:
                 where = f"{path}:{reader.line_num}"
                 if None in raw:  # more fields than header
                     raise ReportError(f"{where}: too many fields")
-                rows.append(_row(raw, where, columns))
+                rows.append(_row(raw, where, *chosen))
     if not rows:
         raise ReportError(f"{path}: no data rows")
     return rows
+
+
+def _pick_schema_from_header(found, columns):
+    if columns is not None:
+        return (columns, 2) if found == columns else None
+    if found == default_columns():
+        return default_columns(), 2
+    if found == legacy_columns():
+        return legacy_columns(), 1
+    return None
+
+
+def _pick_schema_from_keys(keys, columns):
+    if columns is not None:
+        return columns, 2
+    # A record with none of the CPU event keys is v1; any other record is
+    # judged as v2, so a record with only some of them is reported as missing
+    # columns rather than guessed at.
+    if not any(c in keys for c in CPU_EVENT_COLUMNS):
+        return legacy_columns(), 1
+    return default_columns(), 2
 
 
 def default_columns():
@@ -173,7 +223,11 @@ def per_run(rows, skip_seconds=0.0):
             elapsed += window["measurement_s"]
         if not kept:
             continue
-        run = {"identity": tuple(kept[0][k] for k in IDENTITY), "windows": len(kept)}
+        run = {
+            "identity": tuple(kept[0][k] for k in IDENTITY),
+            "windows": len(kept),
+            "schemas": {w.get("schema", 2) for w in kept},
+        }
         for metric in METRICS:
             values = [w[metric] for w in kept if w[metric] is not None]
             if not values:
@@ -223,6 +277,14 @@ def compare(base_runs, cand_runs):
         )
     if {i[0] for i in base_ids} == {i[0] for i in cand_ids}:
         notes.append("baseline and candidate report the same build")
+    base_schemas = set().union(*(r["schemas"] for r in base_runs.values()))
+    cand_schemas = set().union(*(r["schemas"] for r in cand_runs.values()))
+    if 1 in base_schemas | cand_schemas:
+        notes.append(
+            "v1 report schema in use (no CPU event rates): CPU event metrics are "
+            "compared only if both sides have them "
+            f"(baseline schemas {sorted(base_schemas)}, candidate {sorted(cand_schemas)})"
+        )
     base, cand = across_runs(base_runs), across_runs(cand_runs)
     few = min(len(base_runs), len(cand_runs)) < MIN_RUNS_FOR_CONCLUSION
     if few:

@@ -185,5 +185,81 @@ class CompareTests(unittest.TestCase):
                 self.assertEqual(pr.main(["compare", "--fail-on-regression", a, b]), 1)
 
 
+class LegacySchemaTests(unittest.TestCase):
+    """v1 reports (before the CPU event rates) must stay interpretable."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+
+    def write_v1_csv(self, name, rows):
+        path = os.path.join(self.dir.name, name)
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=pr.legacy_columns())
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({k: row[k] for k in pr.legacy_columns()})
+        return path
+
+    def test_legacy_columns_are_current_minus_cpu_events(self):
+        self.assertEqual(
+            pr.legacy_columns(),
+            [c for c in pr.default_columns() if c not in pr.CPU_EVENT_COLUMNS],
+        )
+        self.assertEqual(pr.legacy_columns()[-1], "peak_rss_mb")
+
+    def test_v1_csv_loads_with_cpu_metrics_unavailable_not_zero(self):
+        path = self.write_v1_csv("old.csv", [window(1, 0)])
+        row = pr.load(path)[0]
+        self.assertEqual(row["schema"], 1)
+        for name in pr.CPU_EVENT_COLUMNS:
+            self.assertIsNone(row[name])
+
+    def test_current_csv_is_schema_2(self):
+        path = write_csv(self.dir.name, "new.csv", [window(1, 0)])
+        self.assertEqual(pr.load(path)[0]["schema"], 2)
+
+    def test_v1_jsonl_loads(self):
+        row = {k: v for k, v in window(1, 0).items() if k not in pr.CPU_EVENT_COLUMNS}
+        path = os.path.join(self.dir.name, "old.jsonl")
+        write_text(path, json.dumps(row) + "\n")
+        loaded = pr.load(path)[0]
+        self.assertEqual(loaded["schema"], 1)
+        self.assertIsNone(loaded["svc_per_frame"])
+
+    def test_partial_cpu_columns_in_jsonl_are_rejected_not_guessed(self):
+        row = {k: v for k, v in window(1, 0).items() if k != "run_calls_per_frame"}
+        path = os.path.join(self.dir.name, "partial.jsonl")
+        write_text(path, json.dumps(row) + "\n")
+        with self.assertRaisesRegex(pr.ReportError, "missing columns"):
+            pr.load(path)
+
+    def test_unknown_csv_layout_is_still_rejected(self):
+        path = os.path.join(self.dir.name, "odd.csv")
+        columns = pr.legacy_columns()[:-1]  # drops peak_rss_mb: neither schema
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=columns)
+            writer.writeheader()
+            writer.writerow({k: window(1, 0)[k] for k in columns})
+        with self.assertRaisesRegex(pr.ReportError, "known report schema"):
+            pr.load(path)
+
+    def test_compare_v1_baseline_with_v2_candidate_says_so_and_skips_cpu_metrics(self):
+        old = self.write_v1_csv("old.csv", [window(i, 0) for i in (1, 2, 3)])
+        new = write_csv(self.dir.name, "new.csv", [window(i, 0, build="v2-gbbb") for i in (1, 2, 3)])
+        notes, results = pr.compare(pr.per_run(pr.load(old)), pr.per_run(pr.load(new)))
+        self.assertTrue(any("v1 report schema" in n for n in notes))
+        compared = {r["metric"] for r in results}
+        self.assertIn("average_fps", compared)
+        for name in pr.CPU_EVENT_COLUMNS:
+            self.assertNotIn(name, compared)
+
+    def test_compare_two_v2_reports_has_no_schema_note(self):
+        a = write_csv(self.dir.name, "a.csv", [window(i, 0) for i in (1, 2, 3)])
+        b = write_csv(self.dir.name, "b.csv", [window(i, 0, build="v2-gbbb") for i in (1, 2, 3)])
+        notes, _ = pr.compare(pr.per_run(pr.load(a)), pr.per_run(pr.load(b)))
+        self.assertFalse(any("schema" in n for n in notes))
+
+
 if __name__ == "__main__":
     unittest.main()
