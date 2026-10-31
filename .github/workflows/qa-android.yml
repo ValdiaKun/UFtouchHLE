@@ -34,6 +34,21 @@ jobs:
           PYTHONDONTWRITEBYTECODE: '1'
         run: python3 dev-scripts/test_verify_android_apk.py
 
+      - name: Check out current development branch for independent review
+        uses: actions/checkout@v4
+        with:
+          ref: perf-development
+          path: development
+          persist-credentials: false
+
+      - name: Test development benchmark report parser
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          UF_DEV_ROOT: development
+        run: |
+          python3 development/dev-scripts/test_perf_report.py
+          python3 dev-scripts/test_dev_report_compat.py
+
   android-apk:
     name: Build and validate Android ARM64 debug APK
     needs: offline-validator
